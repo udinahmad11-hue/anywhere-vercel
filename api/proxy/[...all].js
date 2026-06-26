@@ -1,5 +1,5 @@
 module.exports = async (req, res) => {
-    // 1. Set CORS Header super longgar
+    // 1. Set CORS Header super longgar untuk Player Video
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', '*');
@@ -10,32 +10,33 @@ module.exports = async (req, res) => {
         return;
     }
 
-    // 2. Ambil URL asli langsung dari request URL mentah browser/player
-    const originalUrl = req.url; // Contoh: /api/proxy/https://domain.com/live/manifest.mpd
+    // 2. Ambil path mentah dari request browser/player
+    const originalUrl = req.url; // Contoh: /api/proxy/https:/domain.com/live/manifest.mpd
     const prefix = '/api/proxy/';
 
     if (!originalUrl.includes(prefix)) {
-        res.status(400).send("Akses harus melalui /api/proxy/");
+        res.status(400).send("Akses ditolak. Harus lewat /api/proxy/");
         return;
     }
 
-    // Potong string untuk mendapatkan URL target murni di belakang /api/proxy/
+    // Potong untuk mengambil URL Target di belakang /api/proxy/
     let targetUrl = originalUrl.substring(originalUrl.indexOf(prefix) + prefix.length);
 
-    // Perbaiki double slash yang sering hilang di lingkungan produksi
+    // --- TRICK SAKTI BYPASS VERCEL ROUTING ---
+    // Jika Vercel memotong double-slash menjadi single-slash (https:/) atau malah hilang (https:)
     if (targetUrl.startsWith('https:/') && !targetUrl.startsWith('https://')) {
         targetUrl = targetUrl.replace('https:/', 'https://');
     } else if (targetUrl.startsWith('http:/') && !targetUrl.startsWith('http://')) {
-        targetUrl = targetUrl.replace('http:/', 'https://');
-    }
-
-    if (!targetUrl) {
-        res.status(200).send("CORS Proxy Path Aktif!");
-        return;
+        targetUrl = targetUrl.replace('http:/', 'http://');
+    } else if (targetUrl.startsWith('https:') && !targetUrl.startsWith('https:/')) {
+        targetUrl = targetUrl.replace('https:', 'https://');
+    } else if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
+        // Jika player mengirim murni tanpa protocol (karena efek BaseURL relatif), paksa tambah https://
+        targetUrl = 'https://' + targetUrl;
     }
 
     try {
-        // 3. Tembak langsung ke server stream
+        // 3. Tembak murni 1:1 ke Starhub
         const response = await fetch(targetUrl, {
             method: req.method,
             headers: {
@@ -45,17 +46,17 @@ module.exports = async (req, res) => {
             }
         });
 
-        // Teruskan Content-Type asli (application/dash+xml, video/mp4, dll.)
+        // Teruskan Content-Type asli (application/dash+xml / video/mp4)
         const contentType = response.headers.get('content-type');
         if (contentType) {
             res.setHeader('content-type', contentType);
         }
 
-        // Ambil data biner murni dan langsung kirimkan keluar
+        // Ambil biner stream / XML manifest, oper langsung keluar
         const dataBuffer = await response.arrayBuffer();
         res.status(response.status).send(Buffer.from(dataBuffer));
 
     } catch (error) {
-        res.status(500).send("Proxy Exception: " + error.message);
+        res.status(500).send("Proxy Error: " + error.message);
     }
 };
