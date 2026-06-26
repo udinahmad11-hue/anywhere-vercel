@@ -8,27 +8,27 @@ const proxyServer = cors_proxy.createServer({
 });
 
 module.exports = (req, res) => {
-    // Ambil semua string URL setelah domain vercel kamu
-    const rawUrl = req.url; 
+    // Vercel kadang menyembunyikan URL asli di req.headers['x-forwarded-url'] atau req.url
+    const originalUrl = req.headers['x-forwarded-url'] || req.url;
     
-    // Cari posisi di mana 'http' atau 'https' dimulai
-    const httpIndex = rawUrl.indexOf('http');
+    // Cari letak mulainya protokol http/https
+    const httpIndex = originalUrl.indexOf('http');
     
     if (httpIndex === -1) {
-        res.status(200).send("CORS Anywhere Serverless Aktif di Singapore! Silakan tempel URL target di belakang domain.");
+        res.status(200).send("CORS Anywhere Singapore Serverless Ready! Silakan tempel URL setelah domain.");
         return;
     }
 
-    // Potong URL sehingga menyisakan target murni (misal: https://rcg-bks400...)
-    const targetUrl = rawUrl.substring(httpIndex);
+    // Ambil link target murni (misal: https://rcg-bks400...)
+    const targetUrl = originalUrl.substring(httpIndex);
 
-    // Setel kembali request URL untuk kebutuhan internal cors-anywhere
+    // Rekonstruksi request untuk cors-anywhere
     req.url = '/' + targetUrl;
 
-    // Suntik header penengah agar tidak kena blokir filter internal
+    // Suntik header wajib internal agar lolos validasi
     req.headers.origin = req.headers.origin || 'https://localhost';
     req.headers['x-requested-with'] = req.headers['x-requested-with'] || 'XMLHttpRequest';
 
-    // Jalankan proxy
+    // Eksekusi proxy
     proxyServer.emit('request', req, res);
 };
