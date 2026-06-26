@@ -1,13 +1,4 @@
-// Definisikan domain proxy kamu sampai ujung folder api/proxy/
-define('VERCEL_PROXY', 'https://anywhere-vercel.vercel.app/api/proxy/');
-
-// Bersihkan link stream asli dari "https://" sebelum digabungkan
-// Contoh: "https://mh-bks400-06.starhubgo.com/.../manifest.mpd" 
-// Menjadi: "mh-bks400-06.starhubgo.com/.../manifest.mpd"
-$cleanStreamUrl = str_replace(['https://', 'http://'], '', $streamUrl);
-
-// Gabungkan! Hasil akhirnya nanti: https://anywhere-vercel.vercel.app/api/proxy/mh-bks400-06.starhubgo.com/live/.../manifest.mpd
-$redirectUrl = VERCEL_PROXY . $cleanStreamUrl;
-
-header("Location: " . $redirectUrl);
-exit;
+{
+  "version": 2,
+  "regions": ["sin1"]
+}
