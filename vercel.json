@@ -1,7 +1,4 @@
 {
   "version": 2,
-  "regions": ["sin1"],
-  "rewrites": [
-    { "source": "/(.*)", "destination": "/api/proxy" }
-  ]
+  "regions": ["sin1"]
 }
