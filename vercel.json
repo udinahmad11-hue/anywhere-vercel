@@ -2,6 +2,6 @@
   "version": 2,
   "regions": ["sin1"],
   "rewrites": [
-    { "source": "/api/proxy/(.*)", "destination": "/api/proxy.js?url=$1" }
+    { "source": "/api/proxy/(.*)", "destination": "/api/proxy.js" }
   ]
 }
