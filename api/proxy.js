@@ -1,60 +1,62 @@
-const cors_proxy = require('cors-anywhere');
-
-// Inisialisasi proxy dengan mematikan proteksi header bawaan
-const proxyServer = cors_proxy.createServer({
-    originWhitelist: [], // Kosongkan agar semua origin diizinkan
-    requireHeader: [],    // PENTING: Kosongkan ini agar tidak memunculkan halaman "Usage help" di player/browser
-    removeHeaders: ['cookie', 'cookie2', 'x-request-user-agent', 'x-cosmetic-meta'],
-    redirectSameOrigin: true
-});
-
-module.exports = (req, res) => {
-    // Jalankan CORS headers dasar untuk penanganan awal
+module.exports = async (req, res) => {
+    // 1. Set CORS Header super longgar agar player tidak rewel
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', '*');
+    res.setHeader('Access-Control-Expose-Headers', '*');
 
     if (req.method === 'OPTIONS') {
         res.status(200).end();
         return;
     }
 
-    // Ambil URL target dari hasil rewrite query vercel
-    let targetUrl = req.query.url;
+    // 2. Ambil seluruh path mentah dari request URL setelah /api/proxy/
+    // Contoh req.url: /api/proxy/https://rcg-bks400-06.starhubgo.com:443/live/dash/file.dash
+    const proxyPrefix = '/api/proxy/';
+    const reqUrl = req.url;
 
-    if (!targetUrl) {
-        res.status(200).send("CORS Proxy Aktif. Gunakan format: /api/proxy/https://domain.com/file.mpd");
+    if (!reqUrl.includes(proxyPrefix)) {
+        res.status(400).send("Format salah.");
         return;
     }
 
-    // Perbaiki hilangnya double-slash jika terpotong oleh gateway pembaca url
+    // Ekstrak URL target murni di belakang /api/proxy/
+    let targetUrl = reqUrl.substring(reqUrl.indexOf(proxyPrefix) + proxyPrefix.length);
+
+    // Fix jika double slash setelah https: hilang akibat parsing browser/player
     if (targetUrl.startsWith('https:/') && !targetUrl.startsWith('https://')) {
         targetUrl = targetUrl.replace('https:/', 'https://');
     } else if (targetUrl.startsWith('http:/') && !targetUrl.startsWith('http://')) {
         targetUrl = targetUrl.replace('http:/', 'https://');
     }
 
-    // Ambil query string asli (seperti ?bkm-query atau token pendukung) jika ada di req.url bawaan
-    const originalUrl = req.url;
-    if (originalUrl.includes('?')) {
-        const extraQuery = originalUrl.substring(originalUrl.indexOf('?'));
-        // Jika targetUrl belum membawa query tersebut, satukan kembali
-        if (!targetUrl.includes(extraQuery) && extraQuery !== `?url=${req.query.url}`) {
-            // Hindari duplikasi parameter internal vercel (?url=)
-            const cleanQuery = extraQuery.replace(`?url=${encodeURIComponent(req.query.url)}`, '').replace(`&url=${encodeURIComponent(req.query.url)}`, '');
-            if (cleanQuery && cleanQuery !== '?') {
-                targetUrl += cleanQuery;
-            }
-        }
+    if (!targetUrl) {
+        res.status(200).send("Proxy Aktif. Siap menerima path murni.");
+        return;
     }
 
-    // Setel req.url internal murni yang akan dieksekusi oleh cors-anywhere
-    req.url = '/' + targetUrl;
+    try {
+        // 3. Lakukan request murni ke server target
+        const response = await fetch(targetUrl, {
+            method: req.method,
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Referer': 'https://www.starhubgo.com/',
+                'Origin': 'https://www.starhubgo.com'
+            }
+        });
 
-    // Suntik header palsu agar engine cors-anywhere menganggap request ini valid dan langsung melemparkan data murninya
-    req.headers['origin'] = req.headers['origin'] || 'https://localhost';
-    req.headers['x-requested-with'] = req.headers['x-requested-with'] || 'XMLHttpRequest';
+        // Copy content type asli dari origin (xml, mp4, m4s, dll)
+        const contentType = response.headers.get('content-type');
+        if (contentType) {
+            res.setHeader('content-type', contentType);
+        }
 
-    // Oper jalurnya ke server proxy utama
-    proxyServer.emit('request', req, res);
+        // Ambil data dalam bentuk buffer lalu kirim utuh tanpa modifikasi string
+        const dataBuffer = await response.arrayBuffer();
+        res.status(response.status).send(Buffer.from(dataBuffer));
+
+    } catch (error) {
+        res.status(500).send("Proxy Error: " + error.message);
+    }
 };
