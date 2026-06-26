@@ -1,8 +1,6 @@
 const cors_proxy = require('cors-anywhere');
 const http = require('http');
 
-const port = process.env.PORT || 8000;
-
 // Konfigurasi murni CORS Anywhere
 const proxyServer = cors_proxy.createServer({
     originWhitelist: [], 
@@ -36,7 +34,11 @@ const server = http.createServer((req, res) => {
     proxyServer.emit('request', req, res);
 });
 
-// Jalankan server di port yang disediakan Vercel
-server.listen(port, () => {
-    console.log('CORS Proxy berjalan di port ' + port);
-});
+// Ini penting untuk Vercel Serverless
+module.exports = server;
+
+// Tetap jalankan port untuk local testing jika diperlukan
+const port = process.env.PORT || 8000;
+if (process.env.NODE_ENV !== 'production') {
+    server.listen(port, () => console.log('Proxy berjalan di port ' + port));
+}
