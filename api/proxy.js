@@ -1,5 +1,5 @@
 module.exports = async (req, res) => {
-    // 1. Atur CORS Header super longgar
+    // 1. CORS Headers
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', '*');
@@ -10,24 +10,53 @@ module.exports = async (req, res) => {
         return;
     }
 
-    let targetUrl = req.query.url;
-    if (!targetUrl) {
+    // Ambil full path setelah /api/proxy/
+    // Contoh req.url: "/api/proxy/YUhSMGNITTZMeTl5WTJn..." atau "/api/proxy?url=..."
+    let rawPath = req.url.replace('/api/proxy', '');
+    
+    // Hilangkan karakter slash pertama atau query tanda tanya jika ada
+    if (rawPath.startsWith('/')) rawPath = rawPath.substring(1);
+    if (rawPath.startsWith('?url=')) rawPath = rawPath.replace('?url=', '');
+
+    if (!rawPath || rawPath === '/') {
         res.status(200).send("Proxy Server Aktif.");
         return;
     }
 
-    // Decode Base64 dari PHP backend jika dikirim ter-encode
-    if (!targetUrl.startsWith('http')) {
+    let targetUrl = '';
+
+    // Cek apakah request datang dari gabungan Clean URL (terdapat nama file di ujung path)
+    // Misal: [BASE64_DIR]/FIFAWCCh1-video=1374000.dash
+    if (rawPath.includes('/')) {
+        const parts = rawPath.split('/');
+        const base64Part = parts[0]; // Bagian Base64 folder
+        const fileName = parts.slice(1).join('/'); // Nama file segmen (.dash)
+
         try {
-            targetUrl = Buffer.from(targetUrl, 'base64').toString('utf8');
+            const decodedDir = Buffer.from(base64Part, 'base64').toString('utf8');
+            // Gabungkan alamat asli remote folder dengan nama file
+            targetUrl = decodedDir.endsWith('/') ? `${decodedDir}${fileName}` : `${decodedDir}/${fileName}`;
         } catch (e) {
-            res.status(400).send("Gagal decode Base64.");
+            res.status(400).send("Gagal decode Clean URL Base64.");
             return;
+        }
+    } else {
+        // Jika request murni base64 tanpa tambahan path (biasanya request pertama dari PHP)
+        try {
+            targetUrl = Buffer.from(rawPath, 'base64').toString('utf8');
+        } catch (e) {
+            // Fallback jika dikirim plaintext url biasa
+            if (rawPath.startsWith('http')) {
+                targetUrl = rawPath;
+            } else {
+                res.status(400).send("Format Base64 tidak valid.");
+                return;
+            }
         }
     }
 
     try {
-        // 2. Ambil data asli dari Starhub sebagai ArrayBuffer terlebih dahulu (aman untuk text maupun binary)
+        // 2. Fetch data dari upstream server
         const response = await fetch(targetUrl, {
             method: req.method,
             headers: {
@@ -41,31 +70,24 @@ module.exports = async (req, res) => {
         const bufferData = await response.arrayBuffer();
         const nodeBuffer = Buffer.from(bufferData);
 
-        // 3. JIKA REQUEST ADALAH MANIFEST UTAMA MPD (Bukan segmen video .dash)
+        // 3. Jika respons adalah file manifest MPD
         if (targetUrl.includes('.mpd') || contentType.includes('xml') || contentType.includes('dash+xml')) {
-            
-            // Ubah buffer menjadi text string untuk dimanipulasi
             let responseData = nodeBuffer.toString('utf8');
 
-            // Dapatkan URL base direktori dari file manifest asli
-            // Contoh: https://ucdn.starhubgo.com/bpk-tv/FIFAWCCh1/output/manifest.mpd
-            // Menjadi: https://ucdn.starhubgo.com/bpk-tv/FIFAWCCh1/output/
+            // Ambil base directory dari link .mpd asli termasuk folder /dash/
             const baseRemoteDir = targetUrl.substring(0, targetUrl.lastIndexOf('/') + 1);
-
-            // Alamat remote absolut untuk segmen
             const absoluteBaseUrl = `${baseRemoteDir}dash/`;
             
-            // Encode base remote target ke Base64 agar aman saat dilempar ke query string
+            // Encode base remote folder ke Base64
             const base64AbsoluteUrl = Buffer.from(absoluteBaseUrl).toString('base64');
             
-            // Bentuk URL Vercel kamu sebagai BaseURL baru bagi player
-            const hostUrl = `https://${req.headers.host}/api/proxy?url=${base64AbsoluteUrl}/`;
+            // Susun BaseURL baru menggunakan struktur Clean Path tanpa tanda tanya (?)
+            const hostUrl = `https://${req.headers.host}/api/proxy/${base64AbsoluteUrl}/`;
 
-            // Eksekusi penulisan ulang tag <BaseURL> secara paksa
+            // Rewrite tag <BaseURL> di dalam XML
             if (responseData.includes('<BaseURL>')) {
                 responseData = responseData.replace(/<BaseURL>.*?<\/BaseURL>/g, `<BaseURL>${hostUrl}</BaseURL>`);
             } else {
-                // Jika bawaannya tidak ada tag BaseURL, sisipkan tepat di bawah <Period id="1" start="PT0S">
                 responseData = responseData.replace('<Period id="1" start="PT0S">', `<Period id="1" start="PT0S">\n    <BaseURL>${hostUrl}</BaseURL>`);
             }
 
@@ -74,17 +96,15 @@ module.exports = async (req, res) => {
             return;
         }
 
-        // 4. JIKA REQUEST ADALAH SEGMEN BINER (.dash / audio / video)
-        // Kirim datanya murni 1:1 tanpa menyentuh isinya
+        // 4. Jika respons adalah biner segmen (.dash)
         if (contentType) {
             res.setHeader('Content-Type', contentType);
         } else {
             res.setHeader('Content-Type', 'application/octet-stream');
         }
-        
         res.status(response.status).send(nodeBuffer);
 
     } catch (error) {
-        res.status(500).send("Proxy Dynamic Error: " + error.message);
+        res.status(500).send("Proxy Error: " + error.message);
     }
 };
