@@ -27,7 +27,7 @@ module.exports = async (req, res) => {
     }
 
     try {
-        // 2. Tarik data asli dari Starhub
+        // 2. Ambil data asli dari Starhub sebagai ArrayBuffer terlebih dahulu (aman untuk text maupun binary)
         const response = await fetch(targetUrl, {
             method: req.method,
             headers: {
@@ -38,34 +38,34 @@ module.exports = async (req, res) => {
         });
 
         const contentType = response.headers.get('content-type') || '';
-        
-        // Ambil data dalam bentuk text string terlebih dahulu
-        let responseData = await response.text();
+        const bufferData = await response.arrayBuffer();
+        const nodeBuffer = Buffer.from(bufferData);
 
-        // 3. JIKA RESPONS ADALAH MANIFEST MPD (DASH XML)
-        if (contentType.includes('xml') || contentType.includes('dash+xml') || targetUrl.includes('.mpd') || responseData.includes('<MPD')) {
+        // 3. JIKA REQUEST ADALAH MANIFEST UTAMA MPD (Bukan segmen video .dash)
+        if (targetUrl.includes('.mpd') || contentType.includes('xml') || contentType.includes('dash+xml')) {
             
+            // Ubah buffer menjadi text string untuk dimanipulasi
+            let responseData = nodeBuffer.toString('utf8');
+
             // Dapatkan URL base direktori dari file manifest asli
-            // Contoh: https://mh-bks400-06.starhubgo.com/bpk-tv/FIFAWCCh2/output/manifest.mpd 
-            // Menjadi: https://mh-bks400-06.starhubgo.com/bpk-tv/FIFAWCCh2/output/
+            // Contoh: https://ucdn.starhubgo.com/bpk-tv/FIFAWCCh1/output/manifest.mpd
+            // Menjadi: https://ucdn.starhubgo.com/bpk-tv/FIFAWCCh1/output/
             const baseRemoteDir = targetUrl.substring(0, targetUrl.lastIndexOf('/') + 1);
 
-            // Bersihkan / manipulasi tag <BaseURL> bawaan yang merusak routing
-            // Kita paksa isinya mengarah langsung secara absolut ke server Starhub asli lewat segmen "dash/"
+            // Alamat remote absolut untuk segmen
             const absoluteBaseUrl = `${baseRemoteDir}dash/`;
             
-            // Encode kembali absolute URL tadi ke Base64 agar aman saat dipanggil player
+            // Encode base remote target ke Base64 agar aman saat dilempar ke query string
             const base64AbsoluteUrl = Buffer.from(absoluteBaseUrl).toString('base64');
             
-            // Inject base url baru yang mengarah kembali ke proxy Vercel kita sendiri
-            // Sehingga player dipaksa memanggil: https://anywhere-vercel.vercel.app/api/proxy?url=[BASE64_STREAMS_DASH]
-            const hostUrl = `https://${req.headers.host}/api/proxy?url=${base64AbsoluteUrl}`;
+            // Bentuk URL Vercel kamu sebagai BaseURL baru bagi player
+            const hostUrl = `https://${req.headers.host}/api/proxy?url=${base64AbsoluteUrl}/`;
 
-            // Eksekusi replace tag <BaseURL> mentah
+            // Eksekusi penulisan ulang tag <BaseURL> secara paksa
             if (responseData.includes('<BaseURL>')) {
                 responseData = responseData.replace(/<BaseURL>.*?<\/BaseURL>/g, `<BaseURL>${hostUrl}</BaseURL>`);
             } else {
-                // Jika tidak ada tag BaseURL, sisipkan tepat di bawah tag <Period>
+                // Jika bawaannya tidak ada tag BaseURL, sisipkan tepat di bawah <Period id="1" start="PT0S">
                 responseData = responseData.replace('<Period id="1" start="PT0S">', `<Period id="1" start="PT0S">\n    <BaseURL>${hostUrl}</BaseURL>`);
             }
 
@@ -74,15 +74,15 @@ module.exports = async (req, res) => {
             return;
         }
 
-        // 4. JIKA RESPONS BUKAN XML (Segmen Video .dash / biner / audio)
-        // Kembalikan tipe content murni dan kirim buffer binernya langsung
+        // 4. JIKA REQUEST ADALAH SEGMEN BINER (.dash / audio / video)
+        // Kirim datanya murni 1:1 tanpa menyentuh isinya
         if (contentType) {
-            res.setHeader('content-type', contentType);
+            res.setHeader('Content-Type', contentType);
+        } else {
+            res.setHeader('Content-Type', 'application/octet-stream');
         }
         
-        // Convert string text kembali ke binary buffer sebelum dilempar ke player
-        const binaryBuffer = Buffer.from(responseData, 'utf8');
-        res.status(response.status).send(binaryBuffer);
+        res.status(response.status).send(nodeBuffer);
 
     } catch (error) {
         res.status(500).send("Proxy Dynamic Error: " + error.message);
