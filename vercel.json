@@ -2,6 +2,6 @@
   "version": 2,
   "regions": ["sin1"],
   "rewrites": [
-    { "source": "/(.*)", "destination": "/api/proxy" }
+    { "source": "/:matchAll*", "destination": "/api/proxy?url=:matchAll*" }
   ]
 }
