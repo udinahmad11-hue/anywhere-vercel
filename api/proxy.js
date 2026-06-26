@@ -1,73 +1,60 @@
 const cors_proxy = require('cors-anywhere');
 
+// Inisialisasi proxy dengan mematikan proteksi header bawaan
 const proxyServer = cors_proxy.createServer({
-    originWhitelist: [], 
-    requireHeader: [], 
+    originWhitelist: [], // Kosongkan agar semua origin diizinkan
+    requireHeader: [],    // PENTING: Kosongkan ini agar tidak memunculkan halaman "Usage help" di player/browser
     removeHeaders: ['cookie', 'cookie2', 'x-request-user-agent', 'x-cosmetic-meta'],
     redirectSameOrigin: true
 });
 
 module.exports = (req, res) => {
-    // 1. Tangkap URL target dari hasil rewrite vercel.json
-    let targetUrl = req.query.url;
+    // Jalankan CORS headers dasar untuk penanganan awal
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', '*');
 
-    if (!targetUrl) {
-        res.status(200).send("CORS Anywhere Singapore Serverless Aktif! Cara pakai: /api/proxy/HTTPS://LINK-TARGET");
+    if (req.method === 'OPTIONS') {
+        res.status(200).end();
         return;
     }
 
-    // Fix otomatis jika double slash hilang saat proses rewrite oleh Vercel Gateway
+    // Ambil URL target dari hasil rewrite query vercel
+    let targetUrl = req.query.url;
+
+    if (!targetUrl) {
+        res.status(200).send("CORS Proxy Aktif. Gunakan format: /api/proxy/https://domain.com/file.mpd");
+        return;
+    }
+
+    // Perbaiki hilangnya double-slash jika terpotong oleh gateway pembaca url
     if (targetUrl.startsWith('https:/') && !targetUrl.startsWith('https://')) {
         targetUrl = targetUrl.replace('https:/', 'https://');
     } else if (targetUrl.startsWith('http:/') && !targetUrl.startsWith('http://')) {
         targetUrl = targetUrl.replace('http:/', 'https://');
     }
 
-    // 2. Jika request adalah manifest MPD, intercept untuk manipulasi BaseURL ke format path
-    const isMpdManifest = req.url.includes('.mpd');
-
-    if (isMpdManifest) {
-        const urlObj = new URL(targetUrl);
-        const lastSlashIndex = urlObj.href.lastIndexOf('/');
-        const originalBasePath = urlObj.href.substring(0, lastSlashIndex + 1);
-
-        // Susun prefix baru menggunakan format path murni tanpa query string '?'
-        const proxyHost = req.headers.host;
-        const proxyProtocol = req.headers['x-forwarded-proto'] || 'https';
-        const customProxyPrefix = `${proxyProtocol}://${proxyHost}/api/proxy/`;
-
-        const oldWrite = res.write;
-        const oldEnd = res.end;
-        let responseBuffer = [];
-
-        res.write = function (chunk) {
-            responseBuffer.push(chunk);
-        };
-
-        res.end = function (chunk) {
-            if (chunk) responseBuffer.push(chunk);
-            
-            let originalBody = Buffer.concat(responseBuffer).toString('utf8');
-
-            // Set BaseURL absolut dengan format /api/proxy/https://...
-            const newAbsoluteBaseUrl = `${customProxyPrefix}${originalBasePath}dash/`;
-            
-            if (originalBody.includes('<BaseURL>')) {
-                originalBody = originalBody.replace(/<BaseURL>([^<]+)<\/BaseURL>/g, `<BaseURL>${newAbsoluteBaseUrl}</BaseURL>`);
-            } else {
-                originalBody = originalBody.replace('<Period id="1" start="PT0S">', `<Period id="1" start="PT0S">\n    <BaseURL>${newAbsoluteBaseUrl}</BaseURL>`);
+    // Ambil query string asli (seperti ?bkm-query atau token pendukung) jika ada di req.url bawaan
+    const originalUrl = req.url;
+    if (originalUrl.includes('?')) {
+        const extraQuery = originalUrl.substring(originalUrl.indexOf('?'));
+        // Jika targetUrl belum membawa query tersebut, satukan kembali
+        if (!targetUrl.includes(extraQuery) && extraQuery !== `?url=${req.query.url}`) {
+            // Hindari duplikasi parameter internal vercel (?url=)
+            const cleanQuery = extraQuery.replace(`?url=${encodeURIComponent(req.query.url)}`, '').replace(`&url=${encodeURIComponent(req.query.url)}`, '');
+            if (cleanQuery && cleanQuery !== '?') {
+                targetUrl += cleanQuery;
             }
-
-            res.setHeader('content-length', Buffer.byteLength(originalBody));
-            oldEnd.call(this, originalBody, 'utf8');
-        };
+        }
     }
 
-    // 3. Setel req.url internal untuk cors-anywhere
+    // Setel req.url internal murni yang akan dieksekusi oleh cors-anywhere
     req.url = '/' + targetUrl;
-    req.headers.origin = req.headers.origin || 'https://localhost';
+
+    // Suntik header palsu agar engine cors-anywhere menganggap request ini valid dan langsung melemparkan data murninya
+    req.headers['origin'] = req.headers['origin'] || 'https://localhost';
     req.headers['x-requested-with'] = req.headers['x-requested-with'] || 'XMLHttpRequest';
 
-    // Jalankan proxy
+    // Oper jalurnya ke server proxy utama
     proxyServer.emit('request', req, res);
 };
