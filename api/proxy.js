@@ -8,29 +8,27 @@ const proxyServer = cors_proxy.createServer({
 });
 
 module.exports = (req, res) => {
-    // 1. Tangkap URL asli dari query parameter Vercel
-    let targetUrl = req.query.url;
+    // 1. Ambil URL mentah dari request (Contoh: /https://mh-bks400-06.starhubgo.com/...)
+    const rawUrl = req.url;
 
-    if (!targetUrl) {
+    // 2. Cari posisi di mana teks "http" dimulai
+    const httpIndex = rawUrl.indexOf('http');
+
+    if (httpIndex === -1) {
         res.status(200).send("CORS Anywhere Singapore Serverless Ready! Silakan tempel URL setelah domain.");
         return;
     }
 
-    // Koreksi otomatis jika format URL yang ditangkap agak berantakan akibat rewrites
-    // Misalnya jika mendeteksi 'https:/rcg-bks400' (kurang satu garis miring)
-    if (targetUrl.startsWith('https:/') && !targetUrl.startsWith('https://')) {
-        targetUrl = targetUrl.replace('https:/', 'https://');
-    } else if (targetUrl.startsWith('http:/') && !targetUrl.startsWith('http://')) {
-        targetUrl = targetUrl.replace('http:/', 'http://');
-    }
+    // 3. Potong string untuk mendapatkan URL target murni yang utuh beserta parameternya
+    const targetUrl = rawUrl.substring(httpIndex);
 
-    // 2. Rekonstruksi request URL internal agar dibaca benar oleh cors-anywhere
+    // 4. Rekonstruksi untuk kebutuhan internal cors-anywhere
     req.url = '/' + targetUrl;
 
-    // 3. Suntik header wajib penengah biar lolos filter internal
+    // 5. Suntik header penengah agar lolos filter internal
     req.headers.origin = req.headers.origin || 'https://localhost';
     req.headers['x-requested-with'] = req.headers['x-requested-with'] || 'XMLHttpRequest';
 
-    // Eksekusi proxy
+    // Jalankan proxy
     proxyServer.emit('request', req, res);
 };
